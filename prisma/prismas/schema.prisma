@@ -1,0 +1,455 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+  relationMode = "prisma" // Para compatibilidad con PlanetScale
+}
+
+// ============================================
+// MODELO: Usuario
+// ============================================
+model User {
+  id               String    @id @default(uuid())
+  email            String    @unique
+  password         String
+  name             String
+  phone            String?
+  avatar           String?
+  
+  role             UserRole  @default(USER)
+  status           UserStatus @default(ACTIVE)
+  
+  wallet           Decimal   @default(0.00) @db.Decimal(10, 2)
+  
+  // Datos de afiliado
+  referralCode     String?   @unique
+  referredBy       String?
+  referrer         User?     @relation("UserReferrals", fields: [referredBy], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  referrals        User[]    @relation("UserReferrals")
+  
+  totalCommissions Decimal   @default(0.00) @db.Decimal(10, 2)
+  pendingCommissions Decimal @default(0.00) @db.Decimal(10, 2)
+  
+  // Seguridad - Intentos de login
+  loginAttempts    Int       @default(0)
+  lockedUntil      DateTime?
+  
+  // Timestamps
+  emailVerified    DateTime?
+  lastLoginAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  
+  // Relaciones
+  orders           Order[]
+  recharges        Recharge[]
+  cart             Cart?
+  sessions         Session[]
+  commissions      Commission[]
+  auditLogs        AuditLog[]
+  
+  @@index([email])
+  @@index([referralCode])
+  @@index([referredBy])
+  @@index([role])
+  @@index([status])
+  @@map("users")
+}
+
+enum UserRole {
+  ADMIN
+  USER
+  AFFILIATE
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  PENDING
+  BANNED
+}
+
+// ============================================
+// MODELO: Producto
+// ============================================
+model Product {
+  id              String      @id @default(uuid())
+  name            String
+  slug            String      @unique
+  description     String?     @db.Text
+  provider        String
+  
+  priceUSD        Decimal     @db.Decimal(10, 2)
+  pricePEN        Decimal     @db.Decimal(10, 2)
+  
+  stock           Int         @default(0)
+  sold            Int         @default(0)
+  
+  category        String?
+  tags            String?     @db.Text // JSON array
+  
+  image           String?
+  images          String?     @db.Text // JSON array
+  
+  deliveryType    DeliveryType @default(MANUAL)
+  
+  // Configuración
+  status          ProductStatus @default(ACTIVE)
+  featured        Boolean     @default(false)
+  
+  // Datos del producto digital
+  credentials     String?     @db.Text // JSON encriptado
+  instructions    String?     @db.Text
+  
+  // SEO
+  metaTitle       String?
+  metaDescription String?     @db.Text
+  
+  // Timestamps
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relaciones
+  orderItems      OrderItem[]
+  cartItems       CartItem[]
+  
+  @@index([slug])
+  @@index([status])
+  @@index([category])
+  @@index([featured])
+  @@map("products")
+}
+
+enum DeliveryType {
+  AUTOMATIC
+  MANUAL
+}
+
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+  OUT_OF_STOCK
+  DISCONTINUED
+}
+
+// ============================================
+// MODELO: Pedido
+// ============================================
+model Order {
+  id              String      @id @default(uuid())
+  orderNumber     String      @unique
+  
+  userId          String
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Montos
+  subtotal        Decimal     @db.Decimal(10, 2)
+  discount        Decimal     @default(0.00) @db.Decimal(10, 2)
+  total           Decimal     @db.Decimal(10, 2)
+  
+  // Estado
+  status          OrderStatus @default(PENDING)
+  paymentStatus   PaymentStatus @default(PENDING)
+  
+  // Información adicional
+  notes           String?     @db.Text
+  deliveryData    String?     @db.Text // JSON con credenciales entregadas
+  
+  // Comisión de afiliado (si aplica)
+  affiliateId     String?
+  commissionAmount Decimal?   @db.Decimal(10, 2)
+  commissionPaid  Boolean     @default(false)
+  
+  // Timestamps
+  paidAt          DateTime?
+  deliveredAt     DateTime?
+  completedAt     DateTime?
+  cancelledAt     DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relaciones
+  items           OrderItem[]
+  commission      Commission?
+  
+  @@index([userId])
+  @@index([orderNumber])
+  @@index([status])
+  @@index([affiliateId])
+  @@index([createdAt])
+  @@map("orders")
+}
+
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+// ============================================
+// MODELO: Item de Pedido
+// ============================================
+model OrderItem {
+  id              String      @id @default(uuid())
+  
+  orderId         String
+  order           Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  
+  productId       String
+  product         Product     @relation(fields: [productId], references: [id], onDelete: Restrict)
+  
+  quantity        Int         @default(1)
+  priceUSD        Decimal     @db.Decimal(10, 2)
+  pricePEN        Decimal     @db.Decimal(10, 2)
+  subtotal        Decimal     @db.Decimal(10, 2)
+  
+  // Snapshot del producto
+  productName     String
+  productProvider String
+  deliveryType    DeliveryType
+  
+  // Entrega
+  delivered       Boolean     @default(false)
+  deliveryData    String?     @db.Text // JSON con credenciales
+  deliveredAt     DateTime?
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  @@index([orderId])
+  @@index([productId])
+  @@map("order_items")
+}
+
+// ============================================
+// MODELO: Recarga de Billetera
+// ============================================
+model Recharge {
+  id              String      @id @default(uuid())
+  
+  userId          String
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  amount          Decimal     @db.Decimal(10, 2)
+  
+  status          RechargeStatus @default(PENDING)
+  
+  // Información de pago
+  paymentMethod   String?
+  paymentReference String?
+  paymentProof    String?     // URL de comprobante
+  
+  // Aprobación
+  approvedBy      String?     // ID del admin
+  approvedAt      DateTime?
+  rejectedAt      DateTime?
+  rejectionReason String?     @db.Text
+  
+  // WhatsApp notification
+  notificationSent Boolean    @default(false)
+  notificationAt  DateTime?
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("recharges")
+}
+
+enum RechargeStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+// ============================================
+// MODELO: Comisión de Afiliado
+// ============================================
+model Commission {
+  id              String      @id @default(uuid())
+  
+  affiliateId     String
+  affiliate       User        @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+  
+  orderId         String      @unique
+  order           Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  
+  orderTotal      Decimal     @db.Decimal(10, 2)
+  commissionRate  Decimal     @default(0.10) @db.Decimal(5, 4) // 10%
+  amount          Decimal     @db.Decimal(10, 2)
+  
+  status          CommissionStatus @default(PENDING)
+  
+  paidAt          DateTime?
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  @@index([affiliateId])
+  @@index([orderId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("commissions")
+}
+
+enum CommissionStatus {
+  PENDING
+  PAID
+  CANCELLED
+}
+
+// ============================================
+// MODELO: Carrito de Compras
+// ============================================
+model Cart {
+  id              String      @id @default(uuid())
+  
+  userId          String      @unique
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  items           CartItem[]
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  @@index([userId])
+  @@map("carts")
+}
+
+model CartItem {
+  id              String      @id @default(uuid())
+  
+  cartId          String
+  cart            Cart        @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  
+  productId       String
+  product         Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  
+  quantity        Int         @default(1)
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  @@unique([cartId, productId])
+  @@index([cartId])
+  @@index([productId])
+  @@map("cart_items")
+}
+
+// ============================================
+// MODELO: Sesión (JWT)
+// ============================================
+model Session {
+  id              String      @id @default(uuid())
+  
+  userId          String
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  token           String      @unique @db.Text
+  refreshToken    String?     @unique @db.Text
+  
+  ipAddress       String?
+  userAgent       String?     @db.Text
+  
+  expiresAt       DateTime
+  lastActivity    DateTime    @default(now())
+  
+  createdAt       DateTime    @default(now())
+  
+  @@index([userId])
+  @@index([token(length: 100)])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// ============================================
+// MODELO: Logs de Auditoría
+// ============================================
+model AuditLog {
+  id              String      @id @default(uuid())
+  
+  userId          String?
+  user            User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  
+  action          String      // LOGIN, LOGOUT, CREATE_ORDER, etc.
+  entity          String?     // users, products, orders, etc.
+  entityId        String?
+  
+  details         String?     @db.Text // JSON
+  
+  ipAddress       String?
+  userAgent       String?     @db.Text
+  
+  createdAt       DateTime    @default(now())
+  
+  @@index([userId])
+  @@index([action])
+  @@index([entity])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ============================================
+// MODELO: Configuración del Sistema
+// ============================================
+model SystemConfig {
+  id              String      @id @default(uuid())
+  
+  key             String      @unique
+  value           String      @db.Text
+  description     String?     @db.Text
+  
+  updatedAt       DateTime    @updatedAt
+  
+  @@index([key])
+  @@map("system_config")
+}
+
+// ============================================
+// MODELO: Notificaciones
+// ============================================
+model Notification {
+  id              String      @id @default(uuid())
+  
+  userId          String
+  
+  title           String
+  message         String      @db.Text
+  type            NotificationType @default(INFO)
+  
+  read            Boolean     @default(false)
+  readAt          DateTime?
+  
+  link            String?
+  
+  createdAt       DateTime    @default(now())
+  
+  @@index([userId])
+  @@index([read])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+enum NotificationType {
+  INFO
+  SUCCESS
+  WARNING
+  ERROR
+}
